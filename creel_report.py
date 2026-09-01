@@ -519,21 +519,42 @@ def weekly_html(store, cfg):
 
 
 # ---------- email ----------
+def _addr_list(v):
+    """Accept a string, comma-separated string, or list -> clean list of addresses."""
+    if not v:
+        return []
+    if isinstance(v, str):
+        v = v.split(",")
+    return [a.strip() for a in v if a and a.strip()]
+
+
 def send_email(html, subject, image_path=None):
     if not os.path.exists(CREDS_FILE):
         raise RuntimeError(f"email creds file missing: {CREDS_FILE}")
     with open(CREDS_FILE) as f:
         c = json.load(f)
+    to = _addr_list(c.get("to"))
+    cc = _addr_list(c.get("cc"))
+    bcc = _addr_list(c.get("bcc"))
+    if not (to or cc or bcc):
+        raise RuntimeError("creds file has no recipients (set 'to', 'cc', or 'bcc')")
+
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = c.get("from", c["smtp_user"])
-    msg["To"] = c["to"]
+    if to:
+        msg["To"] = ", ".join(to)
+    if cc:
+        msg["Cc"] = ", ".join(cc)
+    if bcc:
+        msg["Bcc"] = ", ".join(bcc)  # send_message uses these then strips the header
     msg.set_content("HTML email — enable HTML to view the creel launch report.")
     msg.add_alternative(html, subtype="html")
     if image_path and os.path.exists(image_path):
         with open(image_path, "rb") as f:
             img = f.read()
         msg.get_payload()[1].add_related(img, maintype="image", subtype="png", cid="<cpuechart>")
+
     port = int(c.get("smtp_port", 465))
     host = c.get("smtp_host", "smtp.gmail.com")
     ctx = ssl.create_default_context()
@@ -546,7 +567,7 @@ def send_email(html, subject, image_path=None):
             s.starttls(context=ctx)
             s.login(c["smtp_user"], c["smtp_pass"])
             s.send_message(msg)
-    return c["to"]
+    return len(to) + len(cc) + len(bcc)
 
 
 # ---------- main ----------
@@ -574,9 +595,9 @@ def main():
         chart = make_cpue_chart(store, cfg)
         if do_email:
             html, subject = weekly_html(store, cfg)
-            to = send_email(html, subject, image_path=chart)
-            print(f"Weekly {species_label(cfg)} report emailed to {to}"
-                  + (" (with chart)." if chart else " (chart unavailable)."))
+            nrec = send_email(html, subject, image_path=chart)
+            print(f"Weekly {species_label(cfg)} report emailed to {nrec} recipient(s)"
+                  + (" with chart." if chart else " (chart unavailable)."))
         else:
             print(text)
             if chart:
