@@ -81,11 +81,17 @@ The `--until` date self-limits emailing so a recurring job stops on schedule.
   "smtp_user": "you@gmail.com",
   "smtp_pass": "APP_PASSWORD",
   "from": "you@gmail.com",
-  "to": "recipient@example.com"
+  "to": ["you@example.com"],
+  "bcc": ["friend1@example.com", "friend2@example.com"]
 }
 ```
 
 For Gmail, use an **App Password** (requires 2-Step Verification).
+
+**Multiple recipients (email list):** `to`, `cc`, and `bcc` each accept a single address,
+a comma-separated string, or a list. Put the list on **`bcc`** so recipients don't see each
+other's addresses (keep yourself on `to`). One send goes to everyone. Gmail allows up to
+~100 recipients per message and ~500 recipients/day on a normal account.
 
 ## Data / output
 
