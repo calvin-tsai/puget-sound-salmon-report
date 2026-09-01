@@ -1,0 +1,16 @@
+# Data + generated output (accumulates at runtime)
+memory/
+data/
+*.png
+*.json
+!requirements.json
+
+# Secrets — never commit
+creel_email.json
+*.env
+.env
+
+# Python / OS cruft
+__pycache__/
+*.pyc
+.DS_Store
