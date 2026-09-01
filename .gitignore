@@ -3,7 +3,7 @@ memory/
 data/
 *.png
 *.json
-!requirements.json
+!config.json
 
 # Secrets — never commit
 creel_email.json
