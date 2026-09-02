@@ -107,8 +107,23 @@ it into `bcc` (de-duped, case-insensitive; fails soft if the URL is unreachable)
    ```
 
 Every email-looking cell in the CSV is treated as a subscriber, so column order doesn't
-matter. Anyone with the form link can add themselves; consider an unsubscribe note in the
-footer since a public form has no built-in opt-out.
+matter. Anyone with the form link can add themselves.
+
+**Unsubscribe:** create a second Google Form ("enter your email to unsubscribe"), publish its
+Sheet as CSV, and add these to the creds file:
+
+```json
+"unsubscribe_url": "https://docs.google.com/spreadsheets/d/e/…/pub?output=csv",
+"subscribe_form_url": "https://forms.gle/your-subscribe-form",
+"unsubscribe_form_url": "https://forms.gle/your-unsubscribe-form"
+```
+
+- `unsubscribe_url` — CSV of opt-outs; those emails are removed from every send
+  (your own `to` addresses are always kept, even if they appear there).
+- `subscribe_form_url` / `unsubscribe_form_url` — shown as **Subscribe / Unsubscribe** links
+  in the email footer. The footer only appears when at least one is set.
+
+Final recipients each send = `to` + `cc` + `bcc` + subscribers, de-duped, minus unsubscribes.
 
 ## Data / output
 
