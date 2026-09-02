@@ -46,6 +46,7 @@ pip install --user matplotlib   # only needed for the weekly chart; the rest is 
 python3 creel_report.py                          # daily per-area digest -> stdout
 python3 creel_report.py --weekly                 # weekly launch report + chart -> stdout
 python3 creel_report.py --weekly --email         # build HTML report + email it
+python3 creel_report.py --watch                  # proactive hot-bite alert (or "NO_ALERT")
 
 # select on the fly (overrides config.json):
 python3 creel_report.py --species chinook,coho --areas 9,10 --weekly
@@ -57,6 +58,29 @@ python3 creel_report.py --no-fetch ...           # use stored data, skip scrapin
 
 Flags: `--species a,b`, `--areas a,b`, `--until YYYY-MM-DD`, `--config PATH`,
 `--weekly` (else daily), `--email`, `--no-fetch`.
+
+## Proactive hot-bite alerts (`--watch`)
+
+`--watch` checks whether the latest day's CPUE in any area spiked versus its recent baseline
+and prints an alert — otherwise it prints `NO_ALERT`. It's **toggleable** via `alerts.enabled`
+in config, and self-limiting: a state file (`memory/creel/alert_state.json`) plus a cooldown
+means the same area won't re-alert until the cooldown passes or the bite gets meaningfully
+hotter. Tune it under `alerts`:
+
+```json
+"alerts": {
+  "enabled": true,        // master on/off toggle
+  "spike_mult": 1.8,      // fire when CPUE >= this x the recent baseline
+  "min_anglers": 30,      // ignore thin-sample days
+  "min_cpue": 0.4,        // absolute floor so a low-catch area can't trigger on ratio alone
+  "cooldown_days": 2,     // don't re-alert an area within this many days...
+  "min_baseline_days": 2  // require at least this many prior sampled days for a baseline
+}
+```
+
+Schedule it a couple times a day and wire delivery so a bare `NO_ALERT` posts nothing. This
+pairs naturally with an agent runtime (e.g. OpenClaw heartbeat/cron) that can message you
+proactively; with plain cron, gate on the output (`out=$(… --watch); [ "$out" = NO_ALERT ] || notify "$out"`).
 
 ## Report frequency
 

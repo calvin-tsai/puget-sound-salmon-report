@@ -6,5 +6,13 @@
   "min_week_anglers": 20,
   "anomaly_mult": 1.5,
   "daily_min_anglers": 15,
-  "until": null
+  "until": null,
+  "alerts": {
+    "enabled": false,
+    "spike_mult": 1.8,
+    "min_anglers": 30,
+    "min_cpue": 0.4,
+    "cooldown_days": 2,
+    "min_baseline_days": 2
+  }
 }
