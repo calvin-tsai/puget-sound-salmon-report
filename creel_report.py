@@ -52,9 +52,9 @@ MONTHS = {m: i for i, m in enumerate(
 SPECIES = ["chinook", "coho", "chum", "pink", "sockeye"]  # the 5 Pacific salmon (page columns)
 SPECIES_PRETTY = {"chinook": "Chinook", "coho": "Coho", "chum": "Chum",
                   "pink": "Pink", "sockeye": "Sockeye"}
-# Okabe-Ito colorblind-safe palette, cycled across selected areas
+# Okabe-Ito + Tol colorblind-friendly palette, cycled across selected areas
 PALETTE = ["#E69F00", "#56B4E9", "#009E73", "#D55E00", "#0072B2", "#CC79A7",
-           "#F0E442", "#000000"]
+           "#F0E442", "#000000", "#117733", "#AA4499", "#44AA99", "#882255"]
 
 # --- your defaults (edit config.json or pass flags to change) ---
 DEFAULTS = {
