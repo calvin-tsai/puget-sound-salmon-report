@@ -580,6 +580,10 @@ def weekly_html(store, cfg, creds=None):
     else:
         h.append(f"<p><i>No launch met the {cfg['min_week_anglers']}-angler/week sample floor.</i></p>")
     h.append("<h3>By area (recent week, aggregated)</h3>")
+    h.append("<p style='color:#555;font-size:13px'><i>Catch/angler (a.k.a. CPUE, "
+             "\"catch per unit effort\") is fish caught divided by number of anglers "
+             "interviewed — a fair measure of how good the fishing is regardless of how "
+             "many people showed up.</i></p>")
     h.append("<table cellpadding='6' style='border-collapse:collapse' border='1'>")
     h.append(f"<tr><th>Area</th><th>Anglers</th><th>{escape(slabel)}</th><th>Catch/angler</th><th>WoW</th></tr>")
     for code in sorted(cfg["areas"],
