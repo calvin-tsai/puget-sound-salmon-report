@@ -523,14 +523,17 @@ def make_cpue_chart(store, cfg, path=CHART_PNG):
     if len(dates) < 2:
         return None
     labels, slabel = area_labels(store, cfg), species_label(cfg)
-    xs = [dt.date.fromisoformat(d) for d in dates]
+    totals_by_day = {d: area_totals(store[d], cfg) for d in dates}
     fig, ax = plt.subplots(figsize=(8, 4.2))
     for i, code in enumerate(cfg["areas"]):
-        ys = []
-        for d in dates:
-            t = area_totals(store[d], cfg).get(code)
-            ys.append(t["catch"] / t["anglers"] if t and t["anglers"] > 0 else float("nan"))
-        ax.plot(xs, ys, marker="o", markersize=4, linewidth=2,
+        # only this area's actual sample days, connected across gaps (no NaN breaks)
+        pts = [(dt.date.fromisoformat(d), totals_by_day[d][code]["catch"] / totals_by_day[d][code]["anglers"])
+               for d in dates
+               if totals_by_day[d].get(code) and totals_by_day[d][code]["anglers"] > 0]
+        if not pts:
+            continue
+        axs, ays = zip(*pts)
+        ax.plot(axs, ays, marker="o", markersize=4, linewidth=2,
                 color=PALETTE[i % len(PALETTE)], label=labels[code])
     ax.set_title(f"Puget Sound {slabel} — catch per angler by area")
     ax.set_ylabel(f"{slabel} per angler (CPUE)")
