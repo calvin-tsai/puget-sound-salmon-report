@@ -528,6 +528,28 @@ def _addr_list(v):
     return [a.strip() for a in v if a and a.strip()]
 
 
+EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+
+
+def load_subscribers(url):
+    """Fetch a published CSV (e.g. Google Form -> Sheet) and extract unique emails.
+    Layout-agnostic: pulls every email-looking cell. Fails soft (returns [] on error)."""
+    if not url:
+        return []
+    try:
+        raw = fetch(url)
+    except Exception as e:  # noqa: BLE001
+        sys.stderr.write(f"subscribers fetch failed, using static list only: {e}\n")
+        return []
+    seen, out = set(), []
+    for m in EMAIL_RE.finditer(raw):
+        e = m.group(0)
+        if e.lower() not in seen:
+            seen.add(e.lower())
+            out.append(e)
+    return out
+
+
 def send_email(html, subject, image_path=None):
     if not os.path.exists(CREDS_FILE):
         raise RuntimeError(f"email creds file missing: {CREDS_FILE}")
@@ -536,8 +558,15 @@ def send_email(html, subject, image_path=None):
     to = _addr_list(c.get("to"))
     cc = _addr_list(c.get("cc"))
     bcc = _addr_list(c.get("bcc"))
+    # merge self-serve subscribers (published CSV) into bcc, de-duped across all fields
+    subscribers = load_subscribers(c.get("subscribers_url"))
+    existing = {a.lower() for a in to + cc + bcc}
+    for e in subscribers:
+        if e.lower() not in existing:
+            existing.add(e.lower())
+            bcc.append(e)
     if not (to or cc or bcc):
-        raise RuntimeError("creds file has no recipients (set 'to', 'cc', or 'bcc')")
+        raise RuntimeError("creds file has no recipients (set 'to', 'cc', 'bcc', or 'subscribers_url')")
 
     msg = EmailMessage()
     msg["Subject"] = subject
