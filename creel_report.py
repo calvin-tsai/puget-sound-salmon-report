@@ -689,6 +689,10 @@ def send_email(html, subject, creds, image_path=None):
         msg["Cc"] = ", ".join(cc)
     if bcc:
         msg["Bcc"] = ", ".join(bcc)  # send_message uses these then strips the header
+    # RFC 2369 List-Unsubscribe improves inbox placement for legitimate list mail
+    unsub_link = c.get("unsubscribe_form_url") or c.get("unsubscribe_url")
+    if unsub_link:
+        msg["List-Unsubscribe"] = f"<{unsub_link}>"
     msg.set_content("HTML email — enable HTML to view the creel launch report.")
     msg.add_alternative(html, subtype="html")
     if image_path and os.path.exists(image_path):
