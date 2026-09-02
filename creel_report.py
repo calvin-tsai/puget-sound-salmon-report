@@ -470,7 +470,7 @@ def make_cpue_chart(store, cfg, path=CHART_PNG):
     return path
 
 
-def weekly_html(store, cfg):
+def weekly_html(store, cfg, creds=None):
     data = weekly_data(store, cfg)
     if not data:
         return "<p>No creel samples in the stored window yet.</p>", "Puget Sound creel — no data"
@@ -515,6 +515,10 @@ def weekly_html(store, cfg):
              "style='max-width:100%;height:auto;border:1px solid #ddd'>")
     h.append("<p style='color:#888;font-size:12px'>Source: WDFW Puget Sound creel reports "
              "(HTML scrape). Auto-generated.</p>")
+    if creds:
+        footer = email_footer_html(creds)
+        if footer:
+            h.append(footer)
     return "\n".join(h), subject
 
 
@@ -539,7 +543,7 @@ def load_subscribers(url):
     try:
         raw = fetch(url)
     except Exception as e:  # noqa: BLE001
-        sys.stderr.write(f"subscribers fetch failed, using static list only: {e}\n")
+        sys.stderr.write(f"list fetch failed ({url}), skipping: {e}\n")
         return []
     seen, out = set(), []
     for m in EMAIL_RE.finditer(raw):
@@ -550,23 +554,55 @@ def load_subscribers(url):
     return out
 
 
-def send_email(html, subject, image_path=None):
+def load_creds():
     if not os.path.exists(CREDS_FILE):
         raise RuntimeError(f"email creds file missing: {CREDS_FILE}")
     with open(CREDS_FILE) as f:
-        c = json.load(f)
+        return json.load(f)
+
+
+def email_footer_html(creds):
+    """Subscribe / unsubscribe links for the email footer (shown when configured)."""
+    parts = []
+    if creds.get("subscribe_form_url"):
+        parts.append(f"<a href='{escape(creds['subscribe_form_url'])}'>Subscribe</a>")
+    if creds.get("unsubscribe_form_url"):
+        parts.append(f"<a href='{escape(creds['unsubscribe_form_url'])}'>Unsubscribe</a>")
+    if not parts:
+        return ""
+    return ("<p style='color:#888;font-size:12px;margin-top:14px'>"
+            "You're getting this because you signed up for the Puget Sound creel report. "
+            + " · ".join(parts) + "</p>")
+
+
+def resolve_recipients(c):
+    """Build (to, cc, bcc): static lists + subscribers CSV, minus unsubscribes.
+    Your own 'to' addresses are always kept, even if they appear on the unsubscribe list."""
     to = _addr_list(c.get("to"))
     cc = _addr_list(c.get("cc"))
     bcc = _addr_list(c.get("bcc"))
-    # merge self-serve subscribers (published CSV) into bcc, de-duped across all fields
     subscribers = load_subscribers(c.get("subscribers_url"))
-    existing = {a.lower() for a in to + cc + bcc}
-    for e in subscribers:
-        if e.lower() not in existing:
-            existing.add(e.lower())
-            bcc.append(e)
+    unsub = {e.lower() for e in load_subscribers(c.get("unsubscribe_url"))}
+    keep = {a.lower() for a in to}                 # owner addresses are never unsubscribed
+    drop = unsub - keep
+
+    cc = [e for e in cc if e.lower() not in drop]
+    existing = {a.lower() for a in to + cc}
+    merged_bcc = []
+    for e in bcc + subscribers:
+        k = e.lower()
+        if k in existing or k in drop:
+            continue
+        existing.add(k)
+        merged_bcc.append(e)
+    return to, cc, merged_bcc
+
+
+def send_email(html, subject, creds, image_path=None):
+    c = creds
+    to, cc, bcc = resolve_recipients(c)
     if not (to or cc or bcc):
-        raise RuntimeError("creds file has no recipients (set 'to', 'cc', 'bcc', or 'subscribers_url')")
+        raise RuntimeError("no recipients (set 'to', 'cc', 'bcc', or 'subscribers_url')")
 
     msg = EmailMessage()
     msg["Subject"] = subject
@@ -623,8 +659,9 @@ def main():
             f.write(text + "\n")
         chart = make_cpue_chart(store, cfg)
         if do_email:
-            html, subject = weekly_html(store, cfg)
-            nrec = send_email(html, subject, image_path=chart)
+            creds = load_creds()
+            html, subject = weekly_html(store, cfg, creds)
+            nrec = send_email(html, subject, creds, image_path=chart)
             print(f"Weekly {species_label(cfg)} report emailed to {nrec} recipient(s)"
                   + (" with chart." if chart else " (chart unavailable)."))
         else:
