@@ -93,6 +93,23 @@ a comma-separated string, or a list. Put the list on **`bcc`** so recipients don
 other's addresses (keep yourself on `to`). One send goes to everyone. Gmail allows up to
 ~100 recipients per message and ~500 recipients/day on a normal account.
 
+**Self-serve signups (Google Form → Sheet):** add `"subscribers_url"` to the creds file
+with a published-as-CSV link to a Google Sheet, and each send pulls the live list and merges
+it into `bcc` (de-duped, case-insensitive; fails soft if the URL is unreachable).
+
+1. Create a Google Form with an **Email** field → responses go to a linked Sheet.
+2. In the Sheet: **File → Share → Publish to web → CSV**, copy the link (looks like
+   `https://docs.google.com/spreadsheets/d/e/…/pub?output=csv`).
+3. Put it in the creds file:
+
+   ```json
+   "subscribers_url": "https://docs.google.com/spreadsheets/d/e/…/pub?output=csv"
+   ```
+
+Every email-looking cell in the CSV is treated as a subscriber, so column order doesn't
+matter. Anyone with the form link can add themselves; consider an unsubscribe note in the
+footer since a public form has no built-in opt-out.
+
 ## Data / output
 
 Written to `memory/creel/` relative to the workspace (gitignored): `daily.json`
