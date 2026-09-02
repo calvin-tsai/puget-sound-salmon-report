@@ -305,8 +305,11 @@ def daily_digest(store, cfg):
         lines.append("*What changed:*")
         lines += flags + [""]
 
-    lines.append("*By area (latest day):*")
-    for code in cfg["areas"]:
+    lines.append("*By area (latest day), best first:*")
+    order = sorted(cfg["areas"],
+                   key=lambda c: cpue(L[c]["catch"], L[c]["anglers"]) if c in L else -1,
+                   reverse=True)
+    for code in order:
         if code not in L:
             lines.append(f"• *{labels[code]}* — no samples")
             continue
@@ -322,8 +325,8 @@ def daily_digest(store, cfg):
     lines.append("")
 
     win = window_dates(dates, latest, 7)
-    lines.append(f"*7-day avg ({slabel}/angler, {win[0]}..{win[-1]}):*")
-    tc = ta = 0.0
+    lines.append(f"*7-day avg ({slabel}/angler, {win[0]}..{win[-1]}), best first:*")
+    agg7 = {}
     for code in cfg["areas"]:
         c = a = 0.0
         for d in win:
@@ -331,8 +334,12 @@ def daily_digest(store, cfg):
             if t:
                 c += t["catch"]
                 a += t["anglers"]
-        tc += c
-        ta += a
+        agg7[code] = (c, a)
+    tc = sum(c for c, a in agg7.values())
+    ta = sum(a for c, a in agg7.values())
+    for code in sorted(cfg["areas"], key=lambda c: cpue(*agg7[c]) if agg7[c][1] > 0 else -1,
+                       reverse=True):
+        c, a = agg7[code]
         lines.append(f"• *{labels[code]}*: {cpue(c, a):.2f}  ({int(c)} / {int(a)} anglers)"
                      if a > 0 else f"• *{labels[code]}*: no samples")
     lines.append(f"• *All areas*: {cpue(tc, ta):.2f}  ({int(tc)} {slabel} / {int(ta)} anglers)")
@@ -493,8 +500,9 @@ def weekly_text(store, cfg):
         lines.append(f"       CPUE {x['cpue']:.2f} ({wow}) · "
                      f"{x['catch']} {slabel} / {x['anglers']} anglers over {dtxt}")
     lines.append("")
-    lines.append("BY AREA (recent week, aggregated):")
-    for code in cfg["areas"]:
+    lines.append("BY AREA (recent week, aggregated, best first):")
+    for code in sorted(cfg["areas"],
+                       key=lambda c: area_agg[c]["cpue"] if area_agg[c] else -1, reverse=True):
         a = area_agg[code]
         if not a:
             lines.append(f"  {labels[code]}: no samples")
@@ -573,8 +581,9 @@ def weekly_html(store, cfg, creds=None):
         h.append(f"<p><i>No launch met the {cfg['min_week_anglers']}-angler/week sample floor.</i></p>")
     h.append("<h3>By area (recent week, aggregated)</h3>")
     h.append("<table cellpadding='6' style='border-collapse:collapse' border='1'>")
-    h.append(f"<tr><th>Area</th><th>Anglers</th><th>{escape(slabel)}</th><th>CPUE</th><th>WoW</th></tr>")
-    for code in cfg["areas"]:
+    h.append(f"<tr><th>Area</th><th>Anglers</th><th>{escape(slabel)}</th><th>Catch/angler</th><th>WoW</th></tr>")
+    for code in sorted(cfg["areas"],
+                       key=lambda c: area_agg[c]["cpue"] if area_agg[c] else -1, reverse=True):
         a = area_agg[code]
         if not a:
             h.append(f"<tr><td>{escape(labels[code])}</td><td colspan='4'>no samples</td></tr>")
