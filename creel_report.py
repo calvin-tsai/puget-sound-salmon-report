@@ -29,7 +29,7 @@ of selection, so changing species/areas needs no re-scrape.
 Email creds (never committed): ~/.openclaw/creel_email.json
   {"smtp_host","smtp_port","smtp_user","smtp_pass","from","to"}
 """
-import json, re, sys, os, ssl, smtplib, urllib.request, datetime
+import json, re, sys, os, ssl, smtplib, urllib.request, datetime, copy
 from email.message import EmailMessage
 from html import unescape, escape
 
@@ -39,6 +39,7 @@ DAILY_JSON = os.path.join(STORE_DIR, "daily.json")
 DIGEST_MD = os.path.join(STORE_DIR, "latest_digest.md")
 WEEKLY_MD = os.path.join(STORE_DIR, "weekly_report.md")
 CHART_PNG = os.path.join(STORE_DIR, "cpue_areas.png")
+ALERT_STATE = os.path.join(STORE_DIR, "alert_state.json")
 CREDS_FILE = os.path.expanduser("~/.openclaw/creel_email.json")
 DEFAULT_CONFIG = os.path.join(HERE, "config.json")
 
@@ -65,16 +66,24 @@ DEFAULTS = {
     "anomaly_mult": 1.5,
     "daily_min_anglers": 15,
     "until": None,
+    # Proactive hot-bite alerts (OpenClaw heartbeat/cron feature). Toggle with enabled.
+    "alerts": {"enabled": False, "spike_mult": 1.8, "min_anglers": 30, "min_cpue": 0.4,
+               "cooldown_days": 2, "min_baseline_days": 2},
 }
 
 
 # ---------- config ----------
 def resolve_config(args):
-    cfg = dict(DEFAULTS)
+    cfg = copy.deepcopy(DEFAULTS)
     path = _flag_val(args, "--config") or (DEFAULT_CONFIG if os.path.exists(DEFAULT_CONFIG) else None)
     if path:
         with open(path) as f:
-            cfg.update({k: v for k, v in json.load(f).items() if k in DEFAULTS})
+            loaded = json.load(f)
+        for k, v in loaded.items():
+            if k == "alerts" and isinstance(v, dict):
+                cfg["alerts"].update(v)          # merge nested alert settings
+            elif k in DEFAULTS:
+                cfg[k] = v
     if _flag_val(args, "--areas"):
         cfg["areas"] = [a.strip() for a in _flag_val(args, "--areas").split(",") if a.strip()]
     if _flag_val(args, "--species"):
@@ -330,6 +339,73 @@ def daily_digest(store, cfg):
     lines.append("")
     lines.append(f"_History: {len(dates)} sampled days stored._")
     return "\n".join(lines)
+
+
+# ---------- proactive hot-bite alerts (OpenClaw heartbeat/cron) ----------
+def _load_alert_state():
+    if os.path.exists(ALERT_STATE):
+        with open(ALERT_STATE) as f:
+            return json.load(f)
+    return {}
+
+
+def _save_alert_state(s):
+    os.makedirs(STORE_DIR, exist_ok=True)
+    with open(ALERT_STATE, "w") as f:
+        json.dump(s, f, indent=2, sort_keys=True)
+
+
+def watch_alerts(store, cfg):
+    """Return alert lines for areas whose latest CPUE spikes vs recent baseline.
+    Gated by cfg['alerts']['enabled']; de-duped via a state file + cooldown so it never nags."""
+    a = cfg.get("alerts", {})
+    if not a.get("enabled"):
+        return []
+    dates = sampled_dates(store)
+    if not dates:
+        return []
+    labels, slabel = area_labels(store, cfg), species_label(cfg)
+
+    def totals(d):
+        return area_totals(store[d], cfg)
+
+    subs = [d for d in dates if sum(x["anglers"] for x in totals(d).values()) >= cfg["daily_min_anglers"]]
+    latest = subs[-1] if subs else dates[-1]
+    prior = [d for d in dates if d < latest]
+    state = _load_alert_state()
+    spike, min_ang = a.get("spike_mult", 1.8), a.get("min_anglers", 30)
+    cooldown, min_base = a.get("cooldown_days", 2), a.get("min_baseline_days", 2)
+
+    hits = []
+    for code in cfg["areas"]:
+        t = totals(latest).get(code)
+        if not t or t["anglers"] < min_ang:
+            continue
+        cur = cpue(t["catch"], t["anglers"])
+        bvals = [cpue(totals(d)[code]["catch"], totals(d)[code]["anglers"])
+                 for d in prior if totals(d).get(code) and totals(d)[code]["anglers"] > 0]
+        if len(bvals) < min_base:
+            continue
+        b = sum(bvals) / len(bvals)
+        if not (b > 0 and cur >= b * spike and cur >= a.get("min_cpue", 0.4)):
+            continue
+        st = state.get(code)
+        if st:
+            since = (datetime.date.fromisoformat(latest) - datetime.date.fromisoformat(st["date"])).days
+            if since < cooldown and cur <= st["value"] * 1.15:
+                continue  # already alerted recently and not meaningfully hotter
+        hits.append((code, cur, b, int(t["catch"]), int(t["anglers"])))
+        state[code] = {"date": latest, "value": cur}
+
+    if not hits:
+        return []
+    _save_alert_state(state)
+    lines = [f"🔥 {slabel} hot-bite alert — {latest}"]
+    for code, cur, b, catch, ang in hits:
+        lines.append(f"• {labels[code]}: CPUE {cur:.2f} (vs {b:.2f} recent avg, {cur / b:.1f}×) "
+                     f"— {catch} {slabel} / {ang} anglers")
+    lines.append("Might be worth getting out while it's hot.")
+    return lines
 
 
 # ---------- weekly launch report ----------
@@ -641,6 +717,7 @@ def main():
     cfg = resolve_config(args)
     no_fetch = "--no-fetch" in args
     weekly = "--weekly" in args
+    watch = "--watch" in args
     do_email = "--email" in args
 
     if cfg["until"] and datetime.date.today().isoformat() > cfg["until"]:
@@ -652,6 +729,11 @@ def main():
     if not no_fetch:
         store.update(scrape_recent(cfg["trailing_days"]))
         save_store(store)
+
+    if watch:
+        msgs = watch_alerts(store, cfg)
+        print("\n".join(msgs) if msgs else "NO_ALERT")
+        return
 
     if weekly:
         text = weekly_text(store, cfg)
