@@ -31,6 +31,7 @@ Email creds (never committed): ~/.openclaw/creel_email.json
 """
 import json, re, sys, os, ssl, smtplib, urllib.request, datetime, copy, time
 from email.message import EmailMessage
+from email.utils import formataddr
 from html import unescape, escape
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -695,11 +696,13 @@ DAILY_CAP = 480        # safety ceiling under Gmail's ~500/day consumer limit
 BATCH_PAUSE_SEC = 2    # small gap between messages
 
 
-def _build_message(html, subject, creds, to, cc, bcc, image_path):
+def _build_message(html, subject, creds, to, cc, bcc, image_path, text_body=None):
     c = creds
+    addr = c.get("from", c["smtp_user"])
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = c.get("from", c["smtp_user"])
+    msg["From"] = formataddr((c.get("from_name", "Puget Sound Salmon Report"), addr))
+    msg["Reply-To"] = addr
     if to:
         msg["To"] = ", ".join(to)
     if cc:
@@ -709,7 +712,8 @@ def _build_message(html, subject, creds, to, cc, bcc, image_path):
     unsub_link = c.get("unsubscribe_form_url") or c.get("unsubscribe_url")
     if unsub_link:
         msg["List-Unsubscribe"] = f"<{unsub_link}>"   # improves inbox placement
-    msg.set_content("HTML email — enable HTML to view the creel launch report.")
+    # real plaintext alternative (mismatched/stub text is a spam signal)
+    msg.set_content(text_body or "View this email in an HTML-capable client.")
     msg.add_alternative(html, subtype="html")
     if image_path and os.path.exists(image_path):
         with open(image_path, "rb") as f:
@@ -730,7 +734,8 @@ def _plan_batches(to, cc, bcc, from_addr):
     return batches
 
 
-def send_email(html, subject, creds, image_path=None, override_to=None, dry_run=False):
+def send_email(html, subject, creds, image_path=None, override_to=None, dry_run=False,
+               text_body=None):
     """Send the report, batching BCC to respect Gmail limits.
     override_to: send ONLY to this address (test mode, ignores the subscriber list).
     dry_run: print the batch plan and send nothing."""
@@ -762,7 +767,7 @@ def send_email(html, subject, creds, image_path=None, override_to=None, dry_run=
     def _run(server):
         server.login(c["smtp_user"], c["smtp_pass"])
         for i, (t, cc2, b) in enumerate(batches):
-            server.send_message(_build_message(html, subject, creds, t, cc2, b, image_path))
+            server.send_message(_build_message(html, subject, creds, t, cc2, b, image_path, text_body))
             if i < len(batches) - 1:
                 time.sleep(BATCH_PAUSE_SEC)
 
@@ -811,7 +816,7 @@ def main():
             creds = load_creds()
             html, subject = weekly_html(store, cfg, creds)
             nrec = send_email(html, subject, creds, image_path=chart,
-                              override_to=test_to, dry_run=dry_run)
+                              override_to=test_to, dry_run=dry_run, text_body=text)
             if not dry_run:
                 tag = f" (TEST → {test_to})" if test_to else ""
                 print(f"Weekly {species_label(cfg)} report emailed to {nrec} recipient(s){tag}"
