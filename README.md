@@ -53,8 +53,23 @@ python3 creel_report.py --species chinook,coho --areas 9,10 --weekly
 python3 creel_report.py --species pink --areas 8-2,8-1,9 --weekly --email --until 2026-10-31
 python3 creel_report.py --config myconfig.json --weekly
 
+python3 creel_report.py --weekly --email --test you@example.com   # send ONLY to one address (safe test)
+python3 creel_report.py --weekly --email --dry-run               # preview batch plan, send nothing
 python3 creel_report.py --no-fetch ...           # use stored data, skip scraping
 ```
+
+### Sending to a list (batching & limits)
+
+`--email` merges your static `to`/`cc`/`bcc` with the live `subscribers_url` (minus
+`unsubscribe_url`) and sends in **batches** to respect mailbox-provider limits: BCC is
+chunked (default 75/message) so no single message exceeds the ~100-recipient cap, with a
+short pause between messages. A safety guard refuses sends above `DAILY_CAP` (default 480),
+below Gmail's ~500 recipients/24h consumer limit.
+
+- **Test safely:** `--test you@example.com` sends only to that address and never touches the list.
+- **Preview:** `--dry-run` prints the batch plan and sends nothing.
+- Free consumer Gmail tops out near ~500 recipients/day; past a few hundred, use Google
+  Workspace or an ESP (MailerLite/Buttondown) for reliable delivery.
 
 Flags: `--species a,b`, `--areas a,b`, `--until YYYY-MM-DD`, `--config PATH`,
 `--weekly` (else daily), `--email`, `--no-fetch`.
