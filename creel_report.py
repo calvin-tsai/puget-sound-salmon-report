@@ -29,7 +29,7 @@ of selection, so changing species/areas needs no re-scrape.
 Email creds (never committed): ~/.openclaw/creel_email.json
   {"smtp_host","smtp_port","smtp_user","smtp_pass","from","to"}
 """
-import json, re, sys, os, ssl, smtplib, urllib.request, datetime, copy
+import json, re, sys, os, ssl, smtplib, urllib.request, datetime, copy, time
 from email.message import EmailMessage
 from html import unescape, escape
 
@@ -690,12 +690,13 @@ def resolve_recipients(c):
     return to, cc, merged_bcc
 
 
-def send_email(html, subject, creds, image_path=None):
-    c = creds
-    to, cc, bcc = resolve_recipients(c)
-    if not (to or cc or bcc):
-        raise RuntimeError("no recipients (set 'to', 'cc', 'bcc', or 'subscribers_url')")
+BATCH_SIZE = 75        # BCC recipients per message (keeps each under Gmail's ~100/msg cap)
+DAILY_CAP = 480        # safety ceiling under Gmail's ~500/day consumer limit
+BATCH_PAUSE_SEC = 2    # small gap between messages
 
+
+def _build_message(html, subject, creds, to, cc, bcc, image_path):
+    c = creds
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = c.get("from", c["smtp_user"])
@@ -705,30 +706,74 @@ def send_email(html, subject, creds, image_path=None):
         msg["Cc"] = ", ".join(cc)
     if bcc:
         msg["Bcc"] = ", ".join(bcc)  # send_message uses these then strips the header
-    # RFC 2369 List-Unsubscribe improves inbox placement for legitimate list mail
     unsub_link = c.get("unsubscribe_form_url") or c.get("unsubscribe_url")
     if unsub_link:
-        msg["List-Unsubscribe"] = f"<{unsub_link}>"
+        msg["List-Unsubscribe"] = f"<{unsub_link}>"   # improves inbox placement
     msg.set_content("HTML email — enable HTML to view the creel launch report.")
     msg.add_alternative(html, subtype="html")
     if image_path and os.path.exists(image_path):
         with open(image_path, "rb") as f:
             img = f.read()
         msg.get_payload()[1].add_related(img, maintype="image", subtype="png", cid="<cpuechart>")
+    return msg
+
+
+def _plan_batches(to, cc, bcc, from_addr):
+    """First message carries visible To/Cc + first BCC chunk; later messages are BCC-only."""
+    chunks = [bcc[i:i + BATCH_SIZE] for i in range(0, len(bcc), BATCH_SIZE)] or [[]]
+    batches = []
+    for idx, chunk in enumerate(chunks):
+        if idx == 0:
+            batches.append((to or [from_addr], cc, chunk))
+        else:
+            batches.append(([from_addr], [], chunk))
+    return batches
+
+
+def send_email(html, subject, creds, image_path=None, override_to=None, dry_run=False):
+    """Send the report, batching BCC to respect Gmail limits.
+    override_to: send ONLY to this address (test mode, ignores the subscriber list).
+    dry_run: print the batch plan and send nothing."""
+    c = creds
+    if override_to:
+        to, cc, bcc = [override_to], [], []
+    else:
+        to, cc, bcc = resolve_recipients(c)
+    if not (to or cc or bcc):
+        raise RuntimeError("no recipients (set 'to', 'cc', 'bcc', or 'subscribers_url')")
+
+    total = len(to) + len(cc) + len(bcc)
+    if total > DAILY_CAP:
+        raise RuntimeError(f"{total} recipients exceeds daily cap {DAILY_CAP}; "
+                           "split the send or use an ESP.")
+    from_addr = c.get("from", c["smtp_user"])
+    batches = _plan_batches(to, cc, bcc, from_addr)
+
+    if dry_run:
+        for i, (t, cc2, b) in enumerate(batches, 1):
+            print(f"  batch {i}: To={len(t)} Cc={len(cc2)} Bcc={len(b)}")
+        print(f"DRY RUN: would send {len(batches)} message(s) to {total} recipient(s); no mail sent.")
+        return total
 
     port = int(c.get("smtp_port", 465))
     host = c.get("smtp_host", "smtp.gmail.com")
     ctx = ssl.create_default_context()
+
+    def _run(server):
+        server.login(c["smtp_user"], c["smtp_pass"])
+        for i, (t, cc2, b) in enumerate(batches):
+            server.send_message(_build_message(html, subject, creds, t, cc2, b, image_path))
+            if i < len(batches) - 1:
+                time.sleep(BATCH_PAUSE_SEC)
+
     if port == 465:
-        with smtplib.SMTP_SSL(host, port, context=ctx, timeout=30) as s:
-            s.login(c["smtp_user"], c["smtp_pass"])
-            s.send_message(msg)
+        with smtplib.SMTP_SSL(host, port, context=ctx, timeout=60) as s:
+            _run(s)
     else:
-        with smtplib.SMTP(host, port, timeout=30) as s:
+        with smtplib.SMTP(host, port, timeout=60) as s:
             s.starttls(context=ctx)
-            s.login(c["smtp_user"], c["smtp_pass"])
-            s.send_message(msg)
-    return len(to) + len(cc) + len(bcc)
+            _run(s)
+    return total
 
 
 # ---------- main ----------
@@ -739,6 +784,8 @@ def main():
     weekly = "--weekly" in args
     watch = "--watch" in args
     do_email = "--email" in args
+    test_to = _flag_val(args, "--test")   # send only to this address (safe test)
+    dry_run = "--dry-run" in args
 
     if cfg["until"] and datetime.date.today().isoformat() > cfg["until"]:
         print(f"Report window ended (after {cfg['until']}); nothing sent.")
@@ -763,9 +810,12 @@ def main():
         if do_email:
             creds = load_creds()
             html, subject = weekly_html(store, cfg, creds)
-            nrec = send_email(html, subject, creds, image_path=chart)
-            print(f"Weekly {species_label(cfg)} report emailed to {nrec} recipient(s)"
-                  + (" with chart." if chart else " (chart unavailable)."))
+            nrec = send_email(html, subject, creds, image_path=chart,
+                              override_to=test_to, dry_run=dry_run)
+            if not dry_run:
+                tag = f" (TEST → {test_to})" if test_to else ""
+                print(f"Weekly {species_label(cfg)} report emailed to {nrec} recipient(s){tag}"
+                      + (" with chart." if chart else " (chart unavailable)."))
         else:
             print(text)
             if chart:
