@@ -127,6 +127,21 @@ The `--until` date self-limits emailing so a recurring job stops on schedule.
 
 For Gmail, use an **App Password** (requires 2-Step Verification).
 
+**Deliverability — use an SMTP relay (recommended for lists).** A brand-new Gmail sender is
+often junk-foldered by Outlook/Yahoo. Any SMTP relay works — just point the creds at it, e.g.
+Brevo's free tier (`smtp_host: "smtp-relay.brevo.com"`, `smtp_port: 587`, `smtp_user`/`smtp_pass`
+= your Brevo SMTP login + key). The message (HTML + embedded chart) is unchanged; it just rides
+the relay's established sending reputation. Sends are **batched** (75 recipients/message) with a
+`DAILY_CAP` guard; set it under your provider's daily limit (Brevo free = 300/day).
+
+**List sources.** Recipients can come from (priority order): a **Brevo list**
+(`"brevo_api_key"` + `"brevo_list_id"` — pulled via API, excludes unsubscribed/blacklisted),
+a **MailerLite group** (`"mailerlite_api_token"` + `"mailerlite_group_id"`), or a **Google
+Sheet CSV** (`"subscribers_url"`). Whichever is set is pulled fresh each send. Using an ESP's
+own list + hosted signup/unsubscribe forms keeps subscribe, unsubscribe, and re-subscribe
+coherent in one place. If a configured list pull fails, the send aborts rather than emailing
+an empty list.
+
 **Multiple recipients (email list):** `to`, `cc`, and `bcc` each accept a single address,
 a comma-separated string, or a list. Put the list on **`bcc`** so recipients don't see each
 other's addresses (keep yourself on `to`). One send goes to everyone. Gmail allows up to
