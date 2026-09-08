@@ -647,6 +647,31 @@ def load_subscribers(url):
     return out
 
 
+def load_mailerlite_subscribers(token, group_id):
+    """Fetch active subscriber emails from a MailerLite group (paginated). Fails soft."""
+    if not (token and group_id):
+        return []
+    emails, seen = [], set()
+    url = f"https://connect.mailerlite.com/api/groups/{group_id}/subscribers?limit=100"
+    try:
+        while url:
+            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}",
+                                                       "Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                d = json.loads(r.read().decode())
+            for x in d.get("data", []):
+                if x.get("status") == "active":
+                    e = (x.get("email") or "").strip()
+                    if e and e.lower() not in seen:
+                        seen.add(e.lower())
+                        emails.append(e)
+            url = (d.get("links") or {}).get("next")
+    except Exception as e:  # noqa: BLE001
+        sys.stderr.write(f"MailerLite group fetch failed: {e}\n")
+        return []
+    return emails
+
+
 def load_creds():
     if not os.path.exists(CREDS_FILE):
         raise RuntimeError(f"email creds file missing: {CREDS_FILE}")
@@ -674,7 +699,11 @@ def resolve_recipients(c):
     to = _addr_list(c.get("to"))
     cc = _addr_list(c.get("cc"))
     bcc = _addr_list(c.get("bcc"))
-    subscribers = load_subscribers(c.get("subscribers_url"))
+    # subscriber source: MailerLite group if configured, else the Google Sheet CSV
+    if c.get("mailerlite_api_token") and c.get("mailerlite_group_id"):
+        subscribers = load_mailerlite_subscribers(c["mailerlite_api_token"], c["mailerlite_group_id"])
+    else:
+        subscribers = load_subscribers(c.get("subscribers_url"))
     unsub = {e.lower() for e in load_subscribers(c.get("unsubscribe_url"))}
     keep = {a.lower() for a in to}                 # owner addresses are never unsubscribed
     drop = unsub - keep
@@ -692,7 +721,7 @@ def resolve_recipients(c):
 
 
 BATCH_SIZE = 75        # BCC recipients per message (keeps each under Gmail's ~100/msg cap)
-DAILY_CAP = 480        # safety ceiling under Gmail's ~500/day consumer limit
+DAILY_CAP = 290        # safety ceiling under Brevo free's 300/day limit
 BATCH_PAUSE_SEC = 2    # small gap between messages
 
 
