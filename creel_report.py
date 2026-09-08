@@ -481,14 +481,57 @@ def weekly_data(store, cfg):
                                 "overall": overall, "labels": area_labels(store, cfg)}
 
 
-def weekly_text(store, cfg):
+def ai_blurb(store, cfg, api_key):
+    """3-sentence AI intro (trend / best 3 areas / best 3 launches). Fed exact numbers so
+    the model only phrases them. Fully fallback-safe: returns None on no key or any error."""
+    if not api_key:
+        return None
+    data = weekly_data(store, cfg)
+    if not data:
+        return None
+    launches, area_agg, meta = data
+    labels, slabel, o = meta["labels"], species_label(cfg), meta["overall"]
+    ranked = sorted([c for c in cfg["areas"] if area_agg.get(c)],
+                    key=lambda c: area_agg[c]["cpue"], reverse=True)[:3]
+    area_facts = "; ".join(f"{labels[c]} {area_agg[c]['cpue']:.2f}/angler "
+                           f"({area_agg[c]['wow']:+.2f} WoW)" for c in ranked) or "no area data"
+    launch_facts = "; ".join(f"{x['ramp']} in {labels[x['area']]} "
+                             f"{x['cpue']:.2f}/angler ({x['wow']:+.2f} WoW)"
+                             for x in launches[:3]) or "no launches met the sample floor"
+    overall = (f"{o['cpue']:.2f} {slabel}/angler across all areas "
+               f"({o['wow']:+.2f} WoW), {o['catch']} fish / {o['anglers']} anglers")
+    prompt = (
+        "You write the opening of a Puget Sound recreational salmon fishing newsletter. "
+        "Using ONLY the facts below, write EXACTLY three sentences — no preamble, no lists, no "
+        "markdown, no headings. Sentence 1: the overall trend this week. Sentence 2: the best "
+        "three marine areas right now. Sentence 3: the best three boat launches right now. "
+        "Concrete and useful, lightly upbeat, never invent numbers.\n\n"
+        f"Species: {slabel}. Week ending {meta['latest']}.\n"
+        f"Overall: {overall}.\nBest areas: {area_facts}.\nBest launches: {launch_facts}.")
+    try:
+        from anthropic import Anthropic
+        client = Anthropic(api_key=api_key)
+        m = client.messages.create(model="claude-opus-5", max_tokens=1000,
+                                   messages=[{"role": "user", "content": prompt}])
+        txt = "".join(getattr(b, "text", "") for b in m.content
+                      if getattr(b, "type", "") == "text").strip()
+        return txt or None
+    except Exception as e:  # noqa: BLE001
+        sys.stderr.write(f"AI blurb skipped: {e}\n")
+        return None
+
+
+def weekly_text(store, cfg, blurb=None):
     data = weekly_data(store, cfg)
     if not data:
         return "No creel samples in the stored window yet."
     launches, area_agg, meta = data
     labels, slabel = meta["labels"], species_label(cfg)
     n = cfg["top_launches"]
-    lines = [f"Puget Sound {slabel} — Launch Report ({meta['latest']})",
+    lines = []
+    if blurb:
+        lines += [blurb, ""]
+    lines += [f"Puget Sound {slabel} — Launch Report ({meta['latest']})",
              f"Recent week: {meta['recent'][0]}..{meta['recent'][-1]} | "
              f"Areas {', '.join(cfg['areas'])} | {slabel}", ""]
     lines.append(f"TOP {n} LAUNCHES (hot bite + catch/angler):")
@@ -558,14 +601,17 @@ def make_cpue_chart(store, cfg, path=CHART_PNG):
     return path
 
 
-def weekly_html(store, cfg, creds=None):
+def weekly_html(store, cfg, creds=None, blurb=None):
     data = weekly_data(store, cfg)
     if not data:
         return "<p>No creel samples in the stored window yet.</p>", "Puget Sound creel — no data"
     launches, area_agg, meta = data
     labels, slabel, n = meta["labels"], species_label(cfg), cfg["top_launches"]
     subject = f"Puget Sound {slabel} — Launch Report ({meta['latest']})"
-    h = [f"<h2>🎣 {escape(subject)}</h2>",
+    h = [f"<h2>🎣 {escape(subject)}</h2>"]
+    if blurb:
+        h.append(f"<p style='font-size:15px;line-height:1.5'>{escape(blurb)}</p>")
+    h += [
          f"<p style='color:#555'>Recent week {meta['recent'][0]}–{meta['recent'][-1]} · "
          f"Areas {escape(', '.join(cfg['areas']))} · {escape(slabel)} · raw data, revised after QA/QC</p>",
          f"<h3>Top {n} launches — recommended</h3>"]
@@ -889,9 +935,12 @@ def main():
         chart = make_cpue_chart(store, cfg)
         if do_email:
             creds = load_creds()
-            html, subject = weekly_html(store, cfg, creds)
+            api_key = creds.get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY")
+            blurb = None if dry_run else ai_blurb(store, cfg, api_key)
+            html, subject = weekly_html(store, cfg, creds, blurb=blurb)
+            email_text = weekly_text(store, cfg, blurb=blurb)
             nrec = send_email(html, subject, creds, image_path=chart,
-                              override_to=test_to, dry_run=dry_run, text_body=text)
+                              override_to=test_to, dry_run=dry_run, text_body=email_text)
             if not dry_run:
                 tag = f" (TEST → {test_to})" if test_to else ""
                 print(f"Weekly {species_label(cfg)} report emailed to {nrec} recipient(s){tag}"
