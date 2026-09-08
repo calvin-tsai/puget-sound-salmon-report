@@ -684,7 +684,10 @@ def email_footer_html(creds):
     parts = []
     if creds.get("subscribe_form_url"):
         parts.append(f"<a href='{escape(creds['subscribe_form_url'])}'>Subscribe</a>")
-    if creds.get("unsubscribe_form_url"):
+    if creds.get("brevo_unsubscribe"):
+        # Brevo replaces this tag per-recipient with a managed unsubscribe URL
+        parts.append("<a href='{{ unsubscribe }}'>Unsubscribe</a>")
+    elif creds.get("unsubscribe_form_url"):
         parts.append(f"<a href='{escape(creds['unsubscribe_form_url'])}'>Unsubscribe</a>")
     if not parts:
         return ""
@@ -738,9 +741,10 @@ def _build_message(html, subject, creds, to, cc, bcc, image_path, text_body=None
         msg["Cc"] = ", ".join(cc)
     if bcc:
         msg["Bcc"] = ", ".join(bcc)  # send_message uses these then strips the header
-    unsub_link = c.get("unsubscribe_form_url") or c.get("unsubscribe_url")
-    if unsub_link:
-        msg["List-Unsubscribe"] = f"<{unsub_link}>"   # improves inbox placement
+    if not c.get("brevo_unsubscribe"):   # when Brevo manages unsubscribe, let it add the header
+        unsub_link = c.get("unsubscribe_form_url") or c.get("unsubscribe_url")
+        if unsub_link:
+            msg["List-Unsubscribe"] = f"<{unsub_link}>"   # improves inbox placement
     # real plaintext alternative (mismatched/stub text is a spam signal)
     msg.set_content(text_body or "View this email in an HTML-capable client.")
     msg.add_alternative(html, subtype="html")
