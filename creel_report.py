@@ -677,13 +677,24 @@ def load_brevo_list_subscribers(api_key, list_id):
     if not (api_key and list_id):
         return []
     emails, seen, offset, limit = [], set(), 0, 500
+
+    def _get(url, tries=6):
+        last = None
+        for _ in range(tries):
+            try:
+                req = urllib.request.Request(url, headers={"api-key": api_key, "accept": "application/json"})
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    return json.loads(r.read().decode())
+            except Exception as e:  # retry transient failures incl. rotating-IP 401s
+                last = e
+                time.sleep(1.5)
+        raise last
+
     try:
         while True:
             url = (f"https://api.brevo.com/v3/contacts/lists/{list_id}/contacts"
                    f"?limit={limit}&offset={offset}")
-            req = urllib.request.Request(url, headers={"api-key": api_key, "accept": "application/json"})
-            with urllib.request.urlopen(req, timeout=30) as r:
-                d = json.loads(r.read().decode())
+            d = _get(url)
             batch = d.get("contacts", [])
             for x in batch:
                 if x.get("emailBlacklisted"):
