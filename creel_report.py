@@ -672,6 +672,35 @@ def load_mailerlite_subscribers(token, group_id):
     return emails
 
 
+def load_brevo_list_subscribers(api_key, list_id):
+    """Fetch non-blacklisted contact emails from a Brevo list (paginated). Fails soft."""
+    if not (api_key and list_id):
+        return []
+    emails, seen, offset, limit = [], set(), 0, 500
+    try:
+        while True:
+            url = (f"https://api.brevo.com/v3/contacts/lists/{list_id}/contacts"
+                   f"?limit={limit}&offset={offset}")
+            req = urllib.request.Request(url, headers={"api-key": api_key, "accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                d = json.loads(r.read().decode())
+            batch = d.get("contacts", [])
+            for x in batch:
+                if x.get("emailBlacklisted"):
+                    continue
+                e = (x.get("email") or "").strip()
+                if e and e.lower() not in seen:
+                    seen.add(e.lower())
+                    emails.append(e)
+            if len(batch) < limit:
+                break
+            offset += limit
+    except Exception as e:  # noqa: BLE001
+        # hard failure: don't silently send to an empty list — signal the caller to abort
+        raise RuntimeError(f"Brevo list fetch failed ({list_id}): {e}") from e
+    return emails
+
+
 def load_creds():
     if not os.path.exists(CREDS_FILE):
         raise RuntimeError(f"email creds file missing: {CREDS_FILE}")
@@ -702,8 +731,10 @@ def resolve_recipients(c):
     to = _addr_list(c.get("to"))
     cc = _addr_list(c.get("cc"))
     bcc = _addr_list(c.get("bcc"))
-    # subscriber source: MailerLite group if configured, else the Google Sheet CSV
-    if c.get("mailerlite_api_token") and c.get("mailerlite_group_id"):
+    # subscriber source priority: Brevo list -> MailerLite group -> Google Sheet CSV
+    if c.get("brevo_api_key") and c.get("brevo_list_id"):
+        subscribers = load_brevo_list_subscribers(c["brevo_api_key"], c["brevo_list_id"])
+    elif c.get("mailerlite_api_token") and c.get("mailerlite_group_id"):
         subscribers = load_mailerlite_subscribers(c["mailerlite_api_token"], c["mailerlite_group_id"])
     else:
         subscribers = load_subscribers(c.get("subscribers_url"))
